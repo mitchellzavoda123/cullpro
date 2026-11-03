@@ -1,0 +1,5 @@
+v1.0.0
+- Free up space: blurry shots, burst repeats and Claude rejects go to a CullPro Trash folder, then Empty trash gets the drive space back
+- Export TOP photos now also makes Instagram 4:5 crops of your HERO shots
+- Opens in its own window from the Desktop icon, no black box
+- One click updates from the Update button

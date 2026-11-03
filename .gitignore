@@ -1,0 +1,5 @@
+.venv/
+.env
+cullpro.log
+__pycache__/
+*.pyc

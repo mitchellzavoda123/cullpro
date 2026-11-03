@@ -1,0 +1,6 @@
+# CullPro (Photo Curator v7 + Claude grading). Loose pins so it installs on new Python versions.
+Flask>=3.1
+Pillow>=11.0
+numpy>=1.26
+opencv-python-headless>=4.10
+anthropic>=0.70

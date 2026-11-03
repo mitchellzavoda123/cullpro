@@ -1,0 +1,3 @@
+# RAW (ARW/CR2/NEF...) and HEIC support. CullPro still runs JPG-only if these fail to install.
+rawpy>=0.21
+pillow-heif>=0.18
