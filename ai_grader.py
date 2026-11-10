@@ -123,7 +123,7 @@ def summarize(s: dict) -> dict:
     g = E.grade(s)
     reject = s.get("reject_reason", "none")
     return {
-        "tier": g["tier"], "score": g["score"], "pct": g["pct"],
+        "tier": g["tier"], "score": g["score"], "pct": g["pct"], "port": g["portfolio"],
         "dims": {k: s[k] for k in E.WEIGHTS},
         "sponsors": s.get("sponsors_visible", [])[:6],
         "shot": s.get("shot_type", ""),
@@ -202,7 +202,7 @@ _LABELS = [f"P{i:02d}" for i in range(1, FINALS_N + 1)]
 
 FINALS_PROMPT = """You are the photo editor picking tonight's posts from one game. Above are the strongest frames from the card, each labeled. Order every label from the frame you would post first to the one you would post last.
 
-Rank on, in this order: the size of the moment (peak action or real emotion beats routine play), a sharp face on the main subject, whether the puck or ball and the context make the play readable, then clean framing. Color and brightness are fixed in editing, so do not rank on them. When two frames show the same moment, put the weaker one well down the list, since only one of them will be posted. If reference frames from the photographer's portfolio came first, they show the level they want; frames closest to that level go on top."""
+Rank first on which frames would go in the photographer's portfolio, then on: the size of the moment (peak action or real emotion beats routine play), a sharp face on the main subject, whether the puck or ball and the context make the play readable, then clean framing. Color is fixed in editing, so do not rank on it, but a dark, muddy frame is worse than a bright, clean one. When two frames show the same moment, put the weaker one well down the list, since only one of them will be posted. If reference frames from the photographer's portfolio came first, they show the level they want; frames closest to that level go on top."""
 
 FINALS_SCHEMA = {
     "type": "object",

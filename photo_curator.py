@@ -906,10 +906,14 @@ def rank_key(s, weights):
     the blended score as a tiebreak. With Claude off: the look score alone."""
     b = blended(s, weights)
     if not state['ai_cfg']['on']:
-        return (0, 0, -b)
+        return (0, 0, 0, 0, -b)
     a = state['ai'].get(str(s.path))
     fin = state['finals'].get(str(s.path), 10_000)
-    return (_TIER_RANK.get(a['tier'] if a else '', 3), fin, -b)
+    if not a:
+        return (3, fin, 0, 0, -b)
+    # tier, then finals order, then the 1-10 portfolio number, then Claude's score;
+    # the local look score only settles exact ties.
+    return (_TIER_RANK.get(a['tier'], 3), fin, -(a.get('port') or 0), -a['score'], -b)
 
 
 def _ai_view(path, place=None):
@@ -1403,7 +1407,7 @@ function postAI(extra){return fetch('/api/ai',{method:'POST',headers:{'Content-T
     return d;});}
 function aiBlock(p){const a=p.ai;if(!a)return '';
   const L={moment:'Moment',technical:'Technical',composition:'Composition',postability:'Postability',story:'Story',sponsor:'Sponsor'};
-  let h=`<h3>🤖 Claude · ${a.tier}${a.final?` · 🏆 #${a.final}`:''}<span>${a.score.toFixed(1)} / 5</span></h3>`;
+  let h=`<h3>🤖 Claude · ${a.tier}${a.final?` · 🏆 #${a.final}`:''}<span>${a.port?a.port+' / 10':a.score.toFixed(1)+' / 5'}</span></h3>`;
   Object.entries(L).forEach(([k,lab])=>h+=barRow(lab,(a.dims[k]||0)*20,'Claude score '+(a.dims[k]||0)+' of 5',true,'#c8323f'));
   if(a.reject)h+=`<div style="color:var(--warn);font-size:12px;margin-top:4px">⚠ ${aiEsc(a.reject.replace(/_/g,' '))}</div>`;
   if(a.shot)h+=`<div style="font-size:12px;opacity:.8;margin-top:4px">Shot: ${aiEsc(a.shot)}${a.face?' · face '+aiEsc(a.face.replace(/_/g,' ')):''}</div>`;
@@ -1735,7 +1739,7 @@ function updatePager(){
 }
 function rankCard(p,idx){const path=String(p.path).replace(/"/g,'&quot;');
   const on=p.phonebg?' on':'';
-  const ai=p.ai?`<div class="ai-line t-${p.ai.tier}">${p.ai.final?'🏆 ':'🤖 '}${p.ai.tier} ${p.ai.score.toFixed(1)}${p.ai.sponsors&&p.ai.sponsors.length?' · 💼':''}</div>`:'';
+  const ai=p.ai?`<div class="ai-line t-${p.ai.tier}">${p.ai.final?'🏆 ':'🤖 '}${p.ai.tier} ${p.ai.port?p.ai.port+'/10':p.ai.score.toFixed(1)}${p.ai.sponsors&&p.ai.sponsors.length?' · 💼':''}</div>`:'';
   return `<div class="photo-card kept${p.phonebg?' pbg':''}" data-i="${idx}" data-path="${path}" data-ai="${p.ai?p.ai.tier:''}"><div class="rank-num">${p.rank!=null?p.rank:idx+1}</div>
     <button class="pbg-toggle${on}" data-path="${path}" title="${p.phonebg?'Phone wallpaper ✓ — click to remove':'Set as phone wallpaper'}">📱</button>
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
@@ -1753,7 +1757,7 @@ function renderRank(items){
   const pbgChip=document.getElementById('pbgChipCount');if(pbgChip)pbgChip.textContent=pbgN;
   document.getElementById('exportPbgBtn').style.display=(currentStep==='rank'&&pbgN>0)?'block':'none';
   if(!view.length){g.innerHTML=(items.length&&rankFilter==='pbg')?'<div class="empty"><div class="icon">📱</div><div>No photos flagged as phone wallpaper yet.<br>Tap the 📱 button on a top photo.</div></div>':EMPTY;lastRankSig='';return;}
-  const sig=rankFilter+'|'+view.map(p=>p.rank+':'+p.path+':'+(p.phonebg?1:0)+':'+(p.ai?p.ai.tier+p.ai.score+(p.ai.final||''):'')).join('|');if(sig===lastRankSig)return;lastRankSig=sig;
+  const sig=rankFilter+'|'+view.map(p=>p.rank+':'+p.path+':'+(p.phonebg?1:0)+':'+(p.ai?p.ai.tier+p.ai.score+(p.ai.port||'')+(p.ai.final||''):'')).join('|');if(sig===lastRankSig)return;lastRankSig=sig;
   const emp=g.querySelector('.empty');if(emp)emp.remove();
   const existing={};g.querySelectorAll('.photo-card').forEach(n=>existing[n.dataset.path]=n);
   const frag=document.createDocumentFragment();
@@ -2135,6 +2139,8 @@ function checkUpdate(force){
     if(v.available){b.hidden=false;b.textContent='⬆ Update to v'+v.remote;}else b.hidden=true;
   }).catch(()=>{});}
 checkUpdate(false);setInterval(()=>checkUpdate(false),3600000);
+$('cpVer').style.cursor='pointer';$('cpVer').title='Check for updates';
+$('cpVer').onclick=()=>{toast('Checking for updates…','info');checkUpdate(true);};
 $('cpUpd').onclick=()=>{if(!upd)return;
   $('cpUpdSub').innerHTML=`You have <b>v${esc(upd.local)}</b>. New: <b>v${esc(upd.remote)}</b>. Takes a few seconds. Your key, settings and photos stay put.`;
   $('cpNotes').textContent=upd.notes||'Fixes and improvements.';
