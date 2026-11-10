@@ -3,3 +3,5 @@
 cullpro.log
 __pycache__/
 *.pyc
+references/*
+!references/README.txt

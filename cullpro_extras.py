@@ -29,7 +29,7 @@ from flask import jsonify, request
 HERE = Path(__file__).resolve().parent
 REPO = "mitchellzavoda123/cullpro"
 TRASH = "_CullPro Trash"
-KEEP_ON_UPDATE = {".venv", ".env", "cullpro.log", "__pycache__", ".git"}
+KEEP_ON_UPDATE = {".venv", ".env", "cullpro.log", "__pycache__", ".git", "references"}
 CATS = {
     "blurry": "Blurry shots",
     "repeats": "Burst repeats (sharpest one kept)",

@@ -190,8 +190,8 @@ class AdvancedPhotoAnalyzer:
             return 0.6
         tilts = []
         weights = []
-        for l in lines[:200]:
-            x1, y1, x2, y2 = l[0]
+        # OpenCV 4 returns (N, 1, 4), OpenCV 5 returns (N, 4): flatten both.
+        for x1, y1, x2, y2 in np.asarray(lines).reshape(-1, 4)[:200]:
             length = ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
             ang = np.degrees(np.arctan2(y2 - y1, x2 - x1))  # -180..180
             ang = abs(ang) % 180

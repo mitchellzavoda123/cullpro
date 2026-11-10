@@ -55,12 +55,35 @@ def check_and_save_key(key: str) -> str | None:
     return None
 
 
+# ----------------------------------------------------------------- references
+
+
+def reference_count() -> int:
+    """Portfolio frames in references/. Re-read so new drops show without a restart."""
+    E._refs = None
+    return len(E.load_references()[0])
+
+
+def open_references() -> None:
+    E.REF_DIR.mkdir(exist_ok=True)
+    try:
+        if os.name == "nt":
+            os.startfile(str(E.REF_DIR))          # noqa: S606
+        else:
+            import subprocess
+            subprocess.Popen(["open" if os.uname().sysname == "Darwin" else "xdg-open", str(E.REF_DIR)])
+    except Exception:  # noqa: BLE001
+        pass
+
+
 # ----------------------------------------------------------------- cache
 
 
 def _ck(path: str) -> str:
+    # The grade version is part of the key: a new rubric or a new reference set
+    # means old grades are ignored and the frame is graded again, once.
     st = os.stat(path)
-    return f"{path}|{st.st_size}|{int(st.st_mtime)}"
+    return f"{path}|{st.st_size}|{int(st.st_mtime)}|{E.grade_version()}"
 
 
 def _load():
@@ -96,22 +119,16 @@ def _store(path: str, s: dict):
 
 
 def summarize(s: dict) -> dict:
-    """Raw rubric scores -> what the UI shows."""
-    w = round(sum(s[k] * v for k, v in E.WEIGHTS.items()), 2)
-    tier = "REJECT"
-    for name, cut in E.TIERS:
-        if w >= cut:
-            tier = name
-            break
+    """Raw rubric scores -> what the UI shows. Uses the strict grade from cullpro_sd."""
+    g = E.grade(s)
     reject = s.get("reject_reason", "none")
-    if reject != "none":
-        tier = "REJECT"
     return {
-        "tier": tier, "score": w, "pct": round((w - 1) / 4 * 100, 1),
+        "tier": g["tier"], "score": g["score"], "pct": g["pct"],
         "dims": {k: s[k] for k in E.WEIGHTS},
         "sponsors": s.get("sponsors_visible", [])[:6],
         "shot": s.get("shot_type", ""),
         "reject": "" if reject == "none" else reject,
+        "face": s.get("subject_face", ""),
     }
 
 
@@ -171,3 +188,97 @@ def run(paths, sport, on_result, on_progress, cancelled, workers=8):
             if cancelled():
                 stop.set()
     return graded, usage.dollars(False), None
+
+
+# ----------------------------------------------------------------- finals
+# Grading one frame at a time against fixed anchors is good at sorting a card into
+# tiers and bad at telling the 3rd best frame from the 12th: they all come back as
+# 4s. The finals put the strongest candidates side by side in one request and ask
+# for an order. One call per card, a few cents.
+
+FINALS_N, FINALS_EDGE = 16, 768
+FINALS_CACHE = Path.home() / ".cullpro_finals.json"
+_LABELS = [f"P{i:02d}" for i in range(1, FINALS_N + 1)]
+
+FINALS_PROMPT = """You are the photo editor picking tonight's posts from one game. Above are the strongest frames from the card, each labeled. Order every label from the frame you would post first to the one you would post last.
+
+Rank on, in this order: the size of the moment (peak action or real emotion beats routine play), a sharp face on the main subject, whether the puck or ball and the context make the play readable, then clean framing. Color and brightness are fixed in editing, so do not rank on them. When two frames show the same moment, put the weaker one well down the list, since only one of them will be posted. If reference frames from the photographer's portfolio came first, they show the level they want; frames closest to that level go on top."""
+
+FINALS_SCHEMA = {
+    "type": "object",
+    "properties": {"order": {"type": "array", "items": {"type": "string", "enum": _LABELS}}},
+    "required": ["order"],
+    "additionalProperties": False,
+}
+
+
+def _finals_key(paths) -> str:
+    import hashlib
+    keys = sorted(_ck(p) for p in paths)
+    return hashlib.sha1("\n".join(keys).encode()).hexdigest()
+
+
+def _finals_load() -> dict:
+    try:
+        return json.loads(FINALS_CACHE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _small_b64(path: str, edge: int) -> str:
+    raw = base64.standard_b64decode(preview_b64(path))
+    img = Image.open(io.BytesIO(raw))
+    img.thumbnail((edge, edge), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=82)
+    return base64.standard_b64encode(buf.getvalue()).decode()
+
+
+def finals(paths, sport):
+    """Order the finalists best first. Returns (ordered_paths, dollars, error_or_None).
+    Cached per finalist set, so reopening a card costs nothing."""
+    paths = list(paths)[:FINALS_N]
+    if len(paths) < 3:
+        return paths, 0.0, None
+    key = _finals_key(paths)
+    store = _finals_load()
+    hit = store.get(key)
+    if hit and set(hit) == set(paths):
+        return hit, 0.0, None
+
+    import anthropic
+    client = anthropic.Anthropic(api_key=get_key(), max_retries=3)
+    content = list(E.reference_blocks())
+    for lab, p in zip(_LABELS, paths):
+        content.append({"type": "text", "text": f"{lab}:"})
+        content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                                    "data": _small_b64(p, FINALS_EDGE)}})
+    content.append({"type": "text", "text": FINALS_PROMPT})
+    try:
+        msg = client.messages.create(
+            model=E.MODEL, max_tokens=2048,
+            output_config={"effort": "medium", "format": {"type": "json_schema", "schema": FINALS_SCHEMA}},
+            system=[{"type": "text", "text": E.SPORT_NOTES[sport]}],
+            messages=[{"role": "user", "content": content}],
+        )
+        usage = E.Usage()
+        usage.add(msg.usage)
+        text = next(b.text for b in msg.content if getattr(b, "type", "") == "text")
+        order = json.loads(text)["order"]
+    except Exception as e:  # noqa: BLE001
+        return paths, 0.0, E.is_fatal(e) or f"finals skipped: {str(e)[:120]}"
+
+    by_label = dict(zip(_LABELS, paths))
+    ranked, seen = [], set()
+    for lab in order:
+        p = by_label.get(lab)
+        if p and p not in seen:
+            ranked.append(p)
+            seen.add(p)
+    ranked += [p for p in paths if p not in seen]      # anything it skipped keeps grade order
+    store[key] = ranked
+    try:
+        FINALS_CACHE.write_text(json.dumps(store), encoding="utf-8")
+    except OSError:
+        pass
+    return ranked, usage.dollars(False), None

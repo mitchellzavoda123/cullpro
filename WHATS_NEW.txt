@@ -1,3 +1,13 @@
+v1.1.0 · Stricter ranking
+- Grades against your own best photos: drop 3 to 6 portfolio frames in the references folder (sidebar › open folder) and Claude holds every frame to that bar
+- Tier comes first: a HERO always ranks above a KEEPER, no matter how colorful the KEEPER is. The slider now only breaks ties inside a tier
+- Claude rejects sink to the bottom instead of keeping their score. Only a frame Claude actually calls unusable is a REJECT, so Free up space never trashes a frame just for scoring low
+- HERO now needs a 4+ moment, a 4+ technical and a 4+ composition, with a sharp face. A weak moment or soft focus drags the whole score down
+- Claude checks the face, the puck or ball, and anything blocking the subject before scoring
+- New finals: the top 16 go to Claude side by side and come back in posting order inside each tier (🏆 #1, #2...). One call per game, a few cents
+- Fixed: on a fresh install with OpenCV 5, the local look score failed on every photo
+- Your old grades get redone once on the first rank after updating, since the rubric changed
+
 v1.0.0
 - Free up space: blurry shots, burst repeats and Claude rejects go to a CullPro Trash folder, then Empty trash gets the drive space back
 - Export TOP photos now also makes Instagram 4:5 crops of your HERO shots

@@ -55,6 +55,10 @@ WEIGHTS = {
     "postability": 0.14, "story": 0.12, "sponsor": 0.08,
 }
 TIERS = [("HERO", 4.2), ("KEEPER", 3.5), ("MAYBE", 2.8)]   # below MAYBE is REJECT
+TIER_ORDER = {"HERO": 0, "KEEPER": 1, "MAYBE": 2, "REJECT": 3, "": 4}
+# Bump whenever RUBRIC, SCORE_SCHEMA or grade() changes: cached grades from an
+# older rubric are then ignored and the frame is graded again.
+RUBRIC_VERSION = "2"
 XMP_RATING = {"HERO": 5, "KEEPER": 4, "MAYBE": 3}
 
 # --------------------------------------------------------------------------- rubric
@@ -114,7 +118,15 @@ action = live play. celebration = scoring or winning reaction. bench = players o
 
 reject_reason: the one problem that makes this frame unusable, or none. Use none whenever technical is 3 or higher and the subject is in frame. Choose soft_focus for missed focus, motion_blur for shake or subject blur, subject_occluded when another body or the glass blocks the subject, eyes_closed for a blink on a featured face, back_to_camera when the only subject faces away, blown_highlights or underexposed for exposure failures that editing cannot rescue, cropped_limb when the frame cuts the subject badly at the joints, no_subject for empty or accidental frames.
 
-Score honestly. Most frames on a gameday card are 2s and 3s. A 5 in moment or technical should be rare, and a card that came back with mostly 4s would be useless for culling."""
+CHECKS (answer these first, from what you can actually see, before you score anything)
+
+subject_face: the main subject's face or mask. sharp = eyes or cage/visor area are crisp. soft = visible but not crisp (missed focus, motion, or noise smearing it). not_visible = turned away, hidden, or the frame has no single main subject.
+play_object: the puck or ball. visible = you can find it in frame. not_visible = the play needs it and it is out of frame or hidden. not_applicable = the frame does not need it (celebration, bench, portrait, crowd, venue, ceremony).
+clean_frame: true only when no official, net post, glass glare, stanchion or other player crosses the main subject's face or body.
+
+Your scores must agree with your checks. A soft subject_face caps technical at 3. A not_visible play_object on an action frame caps story at 3. clean_frame false caps composition at 3.
+
+Score strictly. Most frames on a gameday card are 2s and 3s, and a 4 means a photo editor would actually post it. A 5 in any dimension is a frame you would put on the team's main feed tonight; expect only a handful of 5s per card. When you are torn between two scores, give the lower one. A card that came back with mostly 4s would be useless for culling."""
 
 SPORT_NOTES = {
     "hockey": """SPORT: ice hockey, often under arena LED lighting through glass. Ice reads bright white; that is correct exposure, not blown highlights, as long as jerseys and faces hold detail. Glass reflections and smudges count against technical only when they cross the subject. Peak moments: shot release, save at full extension, goal celebration at the glass, big hits on the boards, a breakaway with the goalie in frame. A faceoff is a 3 in moment unless the puck is in the air at the drop. Dasher boards and center ice logos are the main sponsor surfaces.""",
@@ -124,7 +136,11 @@ SPORT_NOTES = {
 
 SCORE_SCHEMA = {
     "type": "object",
+    # Checks come first so the model looks before it scores.
     "properties": {
+        "subject_face": {"type": "string", "enum": ["sharp", "soft", "not_visible"]},
+        "play_object": {"type": "string", "enum": ["visible", "not_visible", "not_applicable"]},
+        "clean_frame": {"type": "boolean"},
         "moment": {"type": "integer", "enum": [1, 2, 3, 4, 5]},
         "technical": {"type": "integer", "enum": [1, 2, 3, 4, 5]},
         "composition": {"type": "integer", "enum": [1, 2, 3, 4, 5]},
@@ -139,7 +155,7 @@ SCORE_SCHEMA = {
             "none", "soft_focus", "motion_blur", "subject_occluded", "eyes_closed",
             "back_to_camera", "blown_highlights", "underexposed", "cropped_limb", "no_subject"]},
     },
-    "required": ["moment", "technical", "composition", "postability", "story", "sponsor",
+    "required": ["subject_face", "play_object", "clean_frame", "moment", "technical", "composition", "postability", "story", "sponsor",
                  "shot_type", "sponsors_visible", "reject_reason"],
     "additionalProperties": False,
 }
@@ -439,6 +455,65 @@ def system_blocks(sport: str) -> list[dict]:
     ]
 
 
+# --------------------------------------------------------------------------- references
+# The photographer's own best frames (portfolio picks) drop into references/ next to
+# this file. Up to REF_MAX of them ride along with every request, ahead of the frame
+# being graded, as the standard a 5 has to meet. They sit in the cached prefix, so
+# after the first call they cost a tenth of the normal input price.
+
+REF_DIR = Path(__file__).resolve().parent / "references"
+REF_MAX, REF_EDGE = 6, 640
+_refs: tuple[list[str], str] | None = None
+
+REF_INTRO = """REFERENCE FRAMES. The next images are the photographer's own portfolio picks, every one of them a frame they rate 8 to 10 out of 10. They are the bar, not frames to grade. A 5 in moment, technical, composition or postability means the frame belongs next to these. A 4 means close but clearly a step below them. Most frames on a card are nowhere near them, and that is normal. Do not reward a frame for looking like one of these in color or subject; reward it for reaching the same level of peak moment, sharpness on the face, and clean framing."""
+
+
+def load_references() -> tuple[list[str], str]:
+    """(base64 JPEGs, short hash of the set). Read once per process."""
+    global _refs
+    if _refs is not None:
+        return _refs
+    files = []
+    if REF_DIR.is_dir():
+        files = sorted(p for p in REF_DIR.iterdir()
+                       if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}
+                       and not p.name.startswith("."))[:REF_MAX]
+    out, h = [], __import__("hashlib").sha1()
+    for p in files:
+        try:
+            img = Image.open(p)
+            img.draft("RGB", (REF_EDGE * 2, REF_EDGE * 2))
+            img = ImageOps.exif_transpose(img).convert("RGB")
+            img.thumbnail((REF_EDGE, REF_EDGE), Image.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, "JPEG", quality=82)
+            out.append(base64.standard_b64encode(buf.getvalue()).decode())
+            st = p.stat()
+            h.update(f"{p.name}|{st.st_size}|{int(st.st_mtime)}".encode())
+        except Exception:
+            continue
+    _refs = (out, h.hexdigest()[:8] if out else "noref")
+    return _refs
+
+
+def grade_version() -> str:
+    """Cache tag: a grade is only reused under the same rubric and reference set."""
+    return f"r{RUBRIC_VERSION}-{load_references()[1]}"
+
+
+def reference_blocks() -> list[dict]:
+    refs = load_references()[0]
+    if not refs:
+        return []
+    blocks: list[dict] = [{"type": "text", "text": REF_INTRO}]
+    for i, b64 in enumerate(refs, 1):
+        blocks.append({"type": "text", "text": f"Reference {i}:"})
+        blocks.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}})
+    blocks.append({"type": "text", "text": "End of reference frames. The frame to grade follows.",
+                   "cache_control": {"type": "ephemeral"}})
+    return blocks
+
+
 def request_params(sport: str, b64: str, model: str) -> dict:
     return {
         "model": model,
@@ -446,6 +521,7 @@ def request_params(sport: str, b64: str, model: str) -> dict:
         "output_config": {"effort": "low", "format": {"type": "json_schema", "schema": SCORE_SCHEMA}},
         "system": system_blocks(sport),
         "messages": [{"role": "user", "content": [
+            *reference_blocks(),
             {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
             {"type": "text", "text": USER_TEXT},
         ]}],
@@ -474,15 +550,48 @@ def apply_scores(f: Frame, s: dict | None) -> None:
         f.status, f.scores, f.weighted, f.tier = "unscored", None, None, ""
         return
     f.scores = s
-    f.weighted = round(sum(s[k] * w for k, w in WEIGHTS.items()), 2)
-    tier = "REJECT"
-    for name, cut in TIERS:
-        if f.weighted >= cut:
-            tier = name
-            break
-    if s.get("reject_reason", "none") != "none":
+    g = grade(s)
+    f.weighted, f.tier, f.status = g["score"], g["tier"], "scored"
+
+
+
+def grade(s: dict) -> dict:
+    """Rubric scores -> strict score (1-5) and tier.
+
+    A plain weighted average let a frame with a dead moment ride high on sponsor
+    or composition. Here the two things a pick cannot live without, moment and
+    technical, pull the whole score down when either is weak, the checks dock
+    soft faces and blocked subjects, and every tier has floors on its own.
+    """
+    m, t, c = s["moment"], s["technical"], s["composition"]
+    w = sum(s[k] * v for k, v in WEIGHTS.items())
+    core = min(m, t)
+    score = w - 0.35 * max(0, 4 - core)          # core 3 costs .35, core 2 costs .70
+    face = s.get("subject_face", "sharp")
+    if face == "soft":
+        score -= 0.40
+    if s.get("clean_frame", True) is False:
+        score -= 0.20
+    if s.get("play_object") == "not_visible" and s.get("shot_type") == "action":
+        score -= 0.15
+    reject = s.get("reject_reason", "none")
+    if reject != "none" or t <= 2:
+        score = min(score, 2.0)                   # rejects sink, they never rank on looks
+    score = round(max(1.0, min(5.0, score)), 2)
+
+    no_face_ok = s.get("shot_type") in ("venue", "crowd")
+    if reject != "none" or t <= 2:
         tier = "REJECT"
-    f.tier, f.status = tier, "scored"
+    elif (score >= 4.2 and m >= 4 and t >= 4 and c >= 4 and face != "soft"
+          and (face == "sharp" or no_face_ok)):
+        tier = "HERO"
+    elif score >= 3.5 and m >= 3 and t >= 3:
+        tier = "KEEPER"
+    else:
+        # Only Claude's explicit verdict makes a REJECT, since Free up space trashes
+        # rejects. A usable frame with a low score is a MAYBE and just ranks low.
+        tier = "MAYBE"
+    return {"score": score, "tier": tier, "pct": round((score - 1) / 4 * 100, 1)}
 
 
 class Usage:
@@ -641,13 +750,14 @@ class ScoreCache:
                     pass
 
     def get(self, f: Frame):
-        return self.data.get(f.key)
+        return self.data.get(f"{f.key}|{grade_version()}")
 
     def put(self, f: Frame) -> None:
         with self.lock:
-            self.data[f.key] = f.scores
+            k = f"{f.key}|{grade_version()}"
+            self.data[k] = f.scores
             with self.path.open("a") as fh:
-                fh.write(json.dumps({"key": f.key, "scores": f.scores}) + "\n")
+                fh.write(json.dumps({"key": k, "scores": f.scores}) + "\n")
 
 
 def estimate(client, sample: Frame, proxy_dir: Path, sport: str, model: str, n: int, batch: bool) -> float:
