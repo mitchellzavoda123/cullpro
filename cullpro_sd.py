@@ -58,7 +58,7 @@ TIERS = [("HERO", 4.2), ("KEEPER", 3.5), ("MAYBE", 2.8)]   # below MAYBE is REJE
 TIER_ORDER = {"HERO": 0, "KEEPER": 1, "MAYBE": 2, "REJECT": 3, "": 4}
 # Bump whenever RUBRIC, SCORE_SCHEMA or grade() changes: cached grades from an
 # older rubric are then ignored and the frame is graded again.
-RUBRIC_VERSION = "2"
+RUBRIC_VERSION = "3"
 XMP_RATING = {"HERO": 5, "KEEPER": 4, "MAYBE": 3}
 
 # --------------------------------------------------------------------------- rubric
@@ -73,8 +73,8 @@ DIMENSIONS (each scored 1 to 5)
 moment: how much happens in the frame.
 5 = peak action or peak emotion: the shot leaving the stick or bat, a collision at its height, a goal or run celebration with open mouths and raised arms, a save at full extension.
 4 = clear action with intent: a player driving to the net, a pitcher at release, a battle along the boards, a slide into a base.
-3 = routine play: skating with the puck, a fielder getting set, a faceoff before the drop, a batter in the box.
-2 = between plays: players gliding, standing, waiting, line changes, walking off the field.
+3 = routine play shot plainly: skating with the puck at a distance, a fielder getting set, a batter in the box. A clean, tight frame of a player skating hard, carrying the puck, or a faceoff at the drop with the linesman in frame is a 4, not a 3.
+2 = between plays with nothing to read: players gliding, standing, waiting, line changes, walking off the field. Huddles, a bench reacting, a goalie tracking the play and tunnel walkouts are not this; score them on the feeling they carry.
 1 = nothing happening: empty ice or field, backs of heads, a referee alone, a frame fired by accident.
 
 technical: focus, exposure and noise on the main subject.
@@ -126,10 +126,16 @@ clean_frame: true only when no official, net post, glass glare, stanchion or oth
 
 Your scores must agree with your checks. A soft subject_face caps technical at 3. A not_visible play_object on an action frame caps story at 3. clean_frame false caps composition at 3.
 
-Score strictly. Most frames on a gameday card are 2s and 3s, and a 4 means a photo editor would actually post it. A 5 in any dimension is a frame you would put on the team's main feed tonight; expect only a handful of 5s per card. When you are torn between two scores, give the lower one. A card that came back with mostly 4s would be useless for culling."""
+portfolio: the score that matters most. Would this frame go in the photographer's portfolio, from 1 to 10? Their portfolio frames are all 8 to 10, and if reference frames came first, they are that bar.
+10 = a frame they would lead the portfolio with. 9 = sits with the best frames in it. 8 = belongs in it. 7 = a strong gameday post that falls just short of the portfolio. 6 = a solid post. 5 = fills a gallery. 4 = a record shot. 3 or lower = nobody would choose it.
+What earns an 8 or more: one clear subject that fills a good part of the frame with a sharp face or cage, the jersey or number readable, bright clean ice behind them, and nothing crossing the subject. Or a real group moment read at a glance: a goal celebration, players piling in at the boards, a bench erupting, a huddle, a scramble at the net. Or a strong detail: gloves on a stick, a number on a back over the net.
+What keeps a frame at 5 or below no matter what is happening: dark, muddy or gray exposure; two or more bodies overlapping with no single subject; the main player small, cut off, or turned away with nothing to read; haze or glare on the glass over the subject; a soft face.
+
+Use the full range. A card has a few 8s and up, a layer of 6s and 7s, and a lot of 3s to 5s. Different frames must get different numbers when one is clearly better than the other."""
 
 SPORT_NOTES = {
-    "hockey": """SPORT: ice hockey, often under arena LED lighting through glass. Ice reads bright white; that is correct exposure, not blown highlights, as long as jerseys and faces hold detail. Glass reflections and smudges count against technical only when they cross the subject. Peak moments: shot release, save at full extension, goal celebration at the glass, big hits on the boards, a breakaway with the goalie in frame. A faceoff is a 3 in moment unless the puck is in the air at the drop. Dasher boards and center ice logos are the main sponsor surfaces.""",
+    "hockey": """SPORT: ice hockey, often club hockey in small rinks under arena LED lighting through glass. The photographer's hockey portfolio is mostly clean single skaters on bright ice, goalie frames (tracking the play, seen through his own net, holding the crease), faceoffs with the linesman, goal celebrations at the boards and on the bench, huddles and scrums at the net, tunnel walkouts and fans reacting. These are the frames that score high on portfolio. Dark gray frames where the ice reads muddy, and tangles of players with no clear subject, score low even during a big play.
+ Ice reads bright white; that is correct exposure, not blown highlights, as long as jerseys and faces hold detail. Glass reflections and smudges count against technical only when they cross the subject. Peak moments: shot release, save at full extension, goal celebration at the glass, big hits on the boards, a breakaway with the goalie in frame. A faceoff is a 3 in moment unless the puck is in the air at the drop. Dasher boards and center ice logos are the main sponsor surfaces.""",
     "baseball": """SPORT: baseball, day or night under stadium lights. Peak moments: ball on the bat, pitcher at release with the ball visible, a play at the plate, a diving catch, a home run trot with teammates waiting at home, a mascot or promotion with crowd reaction. A batter simply standing in the box is a 3 in moment. Outfield wall signs, the scoreboard, dugout signage and giveaway items are the main sponsor surfaces.""",
     "general": """SPORT: mixed or unspecified. Apply the rubric as written and judge peak moments by the sport you can see in the frame.""",
 }
@@ -147,6 +153,7 @@ SCORE_SCHEMA = {
         "postability": {"type": "integer", "enum": [1, 2, 3, 4, 5]},
         "story": {"type": "integer", "enum": [1, 2, 3, 4, 5]},
         "sponsor": {"type": "integer", "enum": [1, 2, 3, 4, 5]},
+        "portfolio": {"type": "integer", "enum": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]},
         "shot_type": {"type": "string", "enum": [
             "action", "celebration", "bench", "crowd", "portrait", "venue", "ceremony", "other"]},
         "sponsors_visible": {"type": "array", "items": {"type": "string"}},
@@ -156,7 +163,7 @@ SCORE_SCHEMA = {
             "back_to_camera", "blown_highlights", "underexposed", "cropped_limb", "no_subject"]},
     },
     "required": ["subject_face", "play_object", "clean_frame", "moment", "technical", "composition", "postability", "story", "sponsor",
-                 "shot_type", "sponsors_visible", "reject_reason"],
+                 "portfolio", "shot_type", "sponsors_visible", "reject_reason"],
     "additionalProperties": False,
 }
 
@@ -462,10 +469,54 @@ def system_blocks(sport: str) -> list[dict]:
 # after the first call they cost a tenth of the normal input price.
 
 REF_DIR = Path(__file__).resolve().parent / "references"
-REF_MAX, REF_EDGE = 6, 640
+REF_MAX, REF_EDGE = 8, 640
+
+# Frames from the photographer's own site, pulled once into references/ when that
+# folder has no photos, so grading is calibrated with zero setup. Delete them and
+# drop in your own any time; a .seeded marker stops them coming back.
+PORTFOLIO_SITE = "https://mitchellz25portfolio.netlify.app/images/"
+PORTFOLIO_REFS = [
+    "0b6a0f5dc7e9-1300.webp",   # goal celebration, student section behind the glass
+    "628db70c7a0f-1300.webp",   # skater carrying the puck along the boards
+    "640d3595f3cc-1300.webp",   # faceoff at the drop with the linesman
+    "c0a046a26055-1300.webp",   # goalie seen through his own net
+    "f55e0d8eacbe-1300.webp",   # players piling in at the boards
+    "a19e4940c7e1-1300.webp",   # scramble at the net, goalie sprawled
+    "c6b688f8fb98-1300.webp",   # detail: gloves gripping the stick
+    "bdb87a9be6ee-1300.webp",   # players skating in to celebrate along the bench
+]
+
+
+_seed_tried = False
+
+
+def seed_references() -> int:
+    """Download the portfolio set into references/ if it holds no photos yet.
+    Tried once per launch, so an offline PC never stalls on it twice."""
+    global _seed_tried
+    if _seed_tried:
+        return 0
+    _seed_tried = True
+    REF_DIR.mkdir(exist_ok=True)
+    marker = REF_DIR / ".seeded"
+    has = any(p.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"} for p in REF_DIR.iterdir())
+    if has or marker.exists():
+        return 0
+    import urllib.request
+    n = 0
+    for i, name in enumerate(PORTFOLIO_REFS, 1):
+        try:
+            with urllib.request.urlopen(PORTFOLIO_SITE + name, timeout=10) as r:
+                (REF_DIR / f"portfolio_{i:02d}.webp").write_bytes(r.read())
+            n += 1
+        except Exception:
+            continue
+    if n:
+        marker.write_text("Pulled from the online portfolio. Delete this file to pull them again.\n")
+    return n
 _refs: tuple[list[str], str] | None = None
 
-REF_INTRO = """REFERENCE FRAMES. The next images are the photographer's own portfolio picks, every one of them a frame they rate 8 to 10 out of 10. They are the bar, not frames to grade. A 5 in moment, technical, composition or postability means the frame belongs next to these. A 4 means close but clearly a step below them. Most frames on a card are nowhere near them, and that is normal. Do not reward a frame for looking like one of these in color or subject; reward it for reaching the same level of peak moment, sharpness on the face, and clean framing."""
+REF_INTRO = """REFERENCE FRAMES. The next images are from the photographer's own portfolio, every one of them a frame they rate 8 to 10 out of 10. They are the bar, not frames to grade. A portfolio score of 8 or more means the frame belongs next to these. A 6 or 7 means a good post that is a step below them. Most frames on a card are nowhere near them, and that is normal. Do not reward a frame for looking like one of these in color or subject; reward it for reaching the same level of peak moment, sharpness on the face, and clean framing."""
 
 
 def load_references() -> tuple[list[str], str]:
@@ -473,6 +524,10 @@ def load_references() -> tuple[list[str], str]:
     global _refs
     if _refs is not None:
         return _refs
+    try:
+        seed_references()
+    except Exception:
+        pass
     files = []
     if REF_DIR.is_dir():
         files = sorted(p for p in REF_DIR.iterdir()
@@ -556,42 +611,34 @@ def apply_scores(f: Frame, s: dict | None) -> None:
 
 
 def grade(s: dict) -> dict:
-    """Rubric scores -> strict score (1-5) and tier.
+    """Rubric scores -> score (1-5), tier, and the 1-10 portfolio number.
 
-    A plain weighted average let a frame with a dead moment ride high on sponsor
-    or composition. Here the two things a pick cannot live without, moment and
-    technical, pull the whole score down when either is weak, the checks dock
-    soft faces and blocked subjects, and every tier has floors on its own.
+    The portfolio number leads: it is the photographer's own question ("would this
+    make my portfolio?") on a 10 step scale, so frames spread out instead of piling
+    up on the same 3. The six dimensions blend in at 40% so two frames with the
+    same portfolio number still separate. Rejects sink.
     """
-    m, t, c = s["moment"], s["technical"], s["composition"]
     w = sum(s[k] * v for k, v in WEIGHTS.items())
-    core = min(m, t)
-    score = w - 0.35 * max(0, 4 - core)          # core 3 costs .35, core 2 costs .70
-    face = s.get("subject_face", "sharp")
-    if face == "soft":
-        score -= 0.40
-    if s.get("clean_frame", True) is False:
-        score -= 0.20
-    if s.get("play_object") == "not_visible" and s.get("shot_type") == "action":
-        score -= 0.15
+    port = s.get("portfolio")
+    if port not in range(1, 11):                 # an older grade without it
+        port = round(1 + (w - 1) * 9 / 4)
+    p5 = 1 + (port - 1) * 4 / 9
+    score = 0.6 * p5 + 0.4 * w
+    t = s["technical"]
     reject = s.get("reject_reason", "none")
-    if reject != "none" or t <= 2:
-        score = min(score, 2.0)                   # rejects sink, they never rank on looks
+    rejected = reject != "none" or t <= 1
+    if rejected:
+        score = min(score, 2.0)
     score = round(max(1.0, min(5.0, score)), 2)
-
-    no_face_ok = s.get("shot_type") in ("venue", "crowd")
-    if reject != "none" or t <= 2:
-        tier = "REJECT"
-    elif (score >= 4.2 and m >= 4 and t >= 4 and c >= 4 and face != "soft"
-          and (face == "sharp" or no_face_ok)):
+    if rejected:
+        tier = "REJECT"                           # only Claude's own verdict trashes a frame
+    elif port >= 8 and t >= 4:
         tier = "HERO"
-    elif score >= 3.5 and m >= 3 and t >= 3:
+    elif port >= 6 and t >= 3:
         tier = "KEEPER"
     else:
-        # Only Claude's explicit verdict makes a REJECT, since Free up space trashes
-        # rejects. A usable frame with a low score is a MAYBE and just ranks low.
         tier = "MAYBE"
-    return {"score": score, "tier": tier, "pct": round((score - 1) / 4 * 100, 1)}
+    return {"score": score, "tier": tier, "pct": round((score - 1) / 4 * 100, 1), "portfolio": port}
 
 
 class Usage:

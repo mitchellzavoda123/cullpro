@@ -1,3 +1,10 @@
+v1.2.0 · Ranks the way your portfolio does
+- Every frame now gets a portfolio score from 1 to 10: would it go in your portfolio? That number drives the ranking, so frames spread out instead of piling up around the same 2 or 3
+- HERO = portfolio 8+, KEEPER = 6 to 7, MAYBE = the rest. REJECT is still only for frames Claude calls unusable
+- Hockey grading rebuilt around what your portfolio actually keeps: clean skaters on bright ice, goalies, faceoffs with the linesman, celebrations at the boards and bench, huddles and scrums, detail crops. Dark muddy frames and tangles of players with no clear subject score low even mid play
+- CullPro pulls 8 hockey frames from your portfolio site into the references folder on its own, so grading is calibrated with no setup. Swap in your own any time
+- Click the version number in the top bar to check for updates right away
+
 v1.1.0 · Stricter ranking
 - Grades against your own best photos: drop 3 to 6 portfolio frames in the references folder (sidebar › open folder) and Claude holds every frame to that bar
 - Tier comes first: a HERO always ranks above a KEEPER, no matter how colorful the KEEPER is. The slider now only breaks ties inside a tier
