@@ -28,7 +28,9 @@ Updates: when a new version is out, an **⬆ Update** button shows up in the top
 
 ## How the AI grading works
 
-Each surviving frame goes to Claude as a 1024px preview with a fixed rubric (`cullpro_sd.py`) that has a written anchor for every score from 1 to 5, plus hockey and baseball notes. Output is constrained to a JSON schema, the rubric is prompt cached, and every grade is cached on disk so a photo is never paid for twice. The final ranking blends Claude's grade with the local look score; the slider sets the mix.
+Each surviving frame goes to Claude as a 1024px preview with a fixed rubric (`cullpro_sd.py`) that has a written anchor for every score from 1 to 5, plus hockey and baseball notes. Output is constrained to a JSON schema, the rubric is prompt cached, and every grade is cached on disk so a photo is never paid for twice. Ranking is strict and tier first: HERO, then KEEPER, then MAYBE, with Claude's rejects at the bottom. Inside a tier, Claude's score is blended with the local look score and the slider sets that mix. Then the top 16 HERO and KEEPER frames go to Claude in one side by side request and come back in posting order.
+
+**Your own bar.** Drop 3 to 6 of your best photos into the `references` folder (sidebar › open folder). Claude sees them with every grade as what a 5 looks like. They sit in the prompt cache, so they add well under a cent per frame. Updates never touch that folder.
 
 ## Credits
 

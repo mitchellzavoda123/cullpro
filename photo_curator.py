@@ -212,6 +212,7 @@ state = {
     'rank':  {**_blank(), 'scores': [], 'total': 0, 'analyzed': 0},
     # CullPro: Claude grading results (path -> summary) and settings
     'ai': {},
+    'finals': {},        # path -> 0-based place from Claude's side by side finals
     'ai_cfg': {'on': True, 'weight': 70, 'sport': 'hockey'},
 }
 
@@ -895,17 +896,45 @@ def blended(s, weights):
     return loc * (1 - w) + a['pct'] * w
 
 
+# Ungraded frames (a failed call) sit above Claude's rejects: unknown is not bad.
+_TIER_RANK = {'HERO': 0, 'KEEPER': 1, 'MAYBE': 2, '': 3, 'REJECT': 4}
+
+
+def rank_key(s, weights):
+    """Sort key, smallest first. With Claude on: tier first, so nothing ever jumps a
+    tier; inside a tier the finalists come first in Claude's side by side order, then
+    the blended score as a tiebreak. With Claude off: the look score alone."""
+    b = blended(s, weights)
+    if not state['ai_cfg']['on']:
+        return (0, 0, -b)
+    a = state['ai'].get(str(s.path))
+    fin = state['finals'].get(str(s.path), 10_000)
+    return (_TIER_RANK.get(a['tier'] if a else '', 3), fin, -b)
+
+
+def _ai_view(path, place=None):
+    a = state['ai'].get(path)
+    if not a or not state['ai_cfg']['on']:
+        return None
+    a = dict(a)
+    a['final'] = place
+    return a
+
+
 def build_topn(weights=None, topn=None):
     weights = weights or state['weights']
     topn = topn or state['topn']
     excluded = state['excluded']
     scores = [s for s in state['rank']['scores'] if s.path not in excluded]
-    ranked = sorted(scores, key=lambda s: blended(s, weights), reverse=True)[:topn]
+    ranked = sorted(scores, key=lambda s: rank_key(s, weights))[:topn]
     out = []
+    place = 0
     for rank, s in enumerate(ranked, 1):
         ov = blended(s, weights)
+        fin = str(s.path) in state['finals']
+        place += fin
         out.append({
-            'ai': state['ai'].get(str(s.path)) if state['ai_cfg']['on'] else None,
+            'ai': _ai_view(str(s.path), place if fin else None),
             'name': s.filename, 'path': s.path, 'thumb': thumb_url(s.path),
             'rank': rank, 'score': f"{ov:.1f}",
             'phonebg': s.path in state['phone_bg'],
@@ -930,6 +959,7 @@ def _grade_with_claude(s, _fmt):
     if not AI.get_key():
         return ' · 🤖 add your Claude key in the sidebar for AI grading'
     paths = [str(sc.path) for sc in s['scores']]
+    state['finals'] = {}
     todo = []
     for p in paths:
         hit = AI.cached(p)
@@ -938,7 +968,7 @@ def _grade_with_claude(s, _fmt):
         else:
             todo.append(p)
     if not todo:
-        return f' · 🤖 Claude grades loaded ({len(paths)})'
+        return f' · 🤖 Claude grades loaded ({len(paths)})' + _run_finals(s)
     t0 = time.time()
 
     def on_result(p, summary):
@@ -960,7 +990,24 @@ def _grade_with_claude(s, _fmt):
         return None
     if err:
         return f' · ⚠ AI grading stopped: {err} (graded {graded}, ${spent:.2f})'
-    return f' · 🤖 Claude graded {graded} for ${spent:.2f}'
+    return f' · 🤖 Claude graded {graded} for ${spent:.2f}' + _run_finals(s)
+
+
+def _run_finals(s):
+    """Side by side finals on the strongest HERO and KEEPER frames."""
+    weights = state['weights']
+    pool = [sc for sc in s['scores']
+            if (state['ai'].get(str(sc.path)) or {}).get('tier') in ('HERO', 'KEEPER')]
+    pool.sort(key=lambda sc: rank_key(sc, weights))
+    finalists = [str(sc.path) for sc in pool[:AI.FINALS_N]]
+    if len(finalists) < 3:
+        return ''
+    s['status'] = f"🏆 Claude comparing the top {len(finalists)} side by side…"
+    order, spent, err = AI.finals(finalists, state['ai_cfg']['sport'])
+    if err:
+        return f' · ⚠ {err}'
+    state['finals'] = {p: i for i, p in enumerate(order)}
+    return f' · 🏆 top {len(order)} ordered' + (f' (${spent:.2f})' if spent else '')
 
 
 def run_rank(folder, ftype='all', pair='both'):
@@ -1311,8 +1358,9 @@ function settingsHTML(step){
       <label class="check"><input type="checkbox" id="aiOn"> Grade with Claude (big moments, sponsors)</label>
       <div class="wgroup" style="margin-top:8px"><label>Sport</label>
         <select id="aiSport"><option value="hockey">🏒 Hockey</option><option value="baseball">⚾ Baseball</option><option value="general">Other</option></select></div>
-      <div class="wgroup"><label>AI share of the final score <b id="aiWv">70</b>%</label>
+      <div class="wgroup"><label>Tiebreak: AI share inside a tier <b id="aiWv">70</b>%</label>
         <input type="range" id="aiW" min="0" max="100" value="70"></div>
+      <div id="aiRefs" style="font-size:12px;margin:6px 0"></div>
       <div id="aiKey" style="font-size:12px"></div>
     </div>`;
 }
@@ -1333,6 +1381,11 @@ function paintAI(){
   const sp=document.getElementById('aiSport');sp.value=aiCfg.sport;sp.onchange=()=>postAI({sport:sp.value});
   const w=document.getElementById('aiW'),wv=document.getElementById('aiWv');w.value=aiCfg.weight;wv.textContent=aiCfg.weight;
   w.oninput=()=>{wv.textContent=w.value;clearTimeout(aiTimer);aiTimer=setTimeout(()=>postAI({weight:parseInt(w.value)}),160);};
+  const r=document.getElementById('aiRefs');
+  if(r){const n=aiCfg.refs||0;
+    r.innerHTML=(n?`🖼 Grading against ${n} portfolio frame${n>1?'s':''}`:'🖼 No portfolio frames yet. Add 3 to 6 of your best')+
+      ' · <a href="#" id="aiRefsOpen">open folder</a>';
+    document.getElementById('aiRefsOpen').onclick=e=>{e.preventDefault();postAI({open_refs:true});};}
   const k=document.getElementById('aiKey');
   if(aiKey){k.innerHTML='✅ Claude key saved · <a href="#" id="aiKeyChange">change</a>';
     document.getElementById('aiKeyChange').onclick=e=>{e.preventDefault();aiKey=false;paintAI();};}
@@ -1350,10 +1403,10 @@ function postAI(extra){return fetch('/api/ai',{method:'POST',headers:{'Content-T
     return d;});}
 function aiBlock(p){const a=p.ai;if(!a)return '';
   const L={moment:'Moment',technical:'Technical',composition:'Composition',postability:'Postability',story:'Story',sponsor:'Sponsor'};
-  let h=`<h3>🤖 Claude · ${a.tier}<span>${a.score.toFixed(1)} / 5</span></h3>`;
+  let h=`<h3>🤖 Claude · ${a.tier}${a.final?` · 🏆 #${a.final}`:''}<span>${a.score.toFixed(1)} / 5</span></h3>`;
   Object.entries(L).forEach(([k,lab])=>h+=barRow(lab,(a.dims[k]||0)*20,'Claude score '+(a.dims[k]||0)+' of 5',true,'#c8323f'));
   if(a.reject)h+=`<div style="color:var(--warn);font-size:12px;margin-top:4px">⚠ ${aiEsc(a.reject.replace(/_/g,' '))}</div>`;
-  if(a.shot)h+=`<div style="font-size:12px;opacity:.8;margin-top:4px">Shot: ${aiEsc(a.shot)}</div>`;
+  if(a.shot)h+=`<div style="font-size:12px;opacity:.8;margin-top:4px">Shot: ${aiEsc(a.shot)}${a.face?' · face '+aiEsc(a.face.replace(/_/g,' ')):''}</div>`;
   if(a.sponsors&&a.sponsors.length)h+=`<div style="font-size:12px;margin-top:4px">💼 ${a.sponsors.map(aiEsc).join(', ')}</div>`;
   return h;}
 function scheduleReweight(){clearTimeout(weightTimer);weightTimer=setTimeout(()=>{
@@ -1682,7 +1735,7 @@ function updatePager(){
 }
 function rankCard(p,idx){const path=String(p.path).replace(/"/g,'&quot;');
   const on=p.phonebg?' on':'';
-  const ai=p.ai?`<div class="ai-line t-${p.ai.tier}">🤖 ${p.ai.tier} ${p.ai.score.toFixed(1)}${p.ai.sponsors&&p.ai.sponsors.length?' · 💼':''}</div>`:'';
+  const ai=p.ai?`<div class="ai-line t-${p.ai.tier}">${p.ai.final?'🏆 ':'🤖 '}${p.ai.tier} ${p.ai.score.toFixed(1)}${p.ai.sponsors&&p.ai.sponsors.length?' · 💼':''}</div>`:'';
   return `<div class="photo-card kept${p.phonebg?' pbg':''}" data-i="${idx}" data-path="${path}" data-ai="${p.ai?p.ai.tier:''}"><div class="rank-num">${p.rank!=null?p.rank:idx+1}</div>
     <button class="pbg-toggle${on}" data-path="${path}" title="${p.phonebg?'Phone wallpaper ✓ — click to remove':'Set as phone wallpaper'}">📱</button>
     <img class="photo-img" src="${p.thumb}" loading="lazy" decoding="async">
@@ -1700,7 +1753,7 @@ function renderRank(items){
   const pbgChip=document.getElementById('pbgChipCount');if(pbgChip)pbgChip.textContent=pbgN;
   document.getElementById('exportPbgBtn').style.display=(currentStep==='rank'&&pbgN>0)?'block':'none';
   if(!view.length){g.innerHTML=(items.length&&rankFilter==='pbg')?'<div class="empty"><div class="icon">📱</div><div>No photos flagged as phone wallpaper yet.<br>Tap the 📱 button on a top photo.</div></div>':EMPTY;lastRankSig='';return;}
-  const sig=rankFilter+'|'+view.map(p=>p.rank+':'+p.path+':'+(p.phonebg?1:0)+':'+(p.ai?p.ai.tier+p.ai.score:'')).join('|');if(sig===lastRankSig)return;lastRankSig=sig;
+  const sig=rankFilter+'|'+view.map(p=>p.rank+':'+p.path+':'+(p.phonebg?1:0)+':'+(p.ai?p.ai.tier+p.ai.score+(p.ai.final||''):'')).join('|');if(sig===lastRankSig)return;lastRankSig=sig;
   const emp=g.querySelector('.empty');if(emp)emp.remove();
   const existing={};g.querySelectorAll('.photo-card').forEach(n=>existing[n.dataset.path]=n);
   const frag=document.createDocumentFragment();
@@ -2377,6 +2430,9 @@ def api_ai():
             cfg['weight'] = int(data['weight'])
         if data.get('sport') in ('hockey', 'baseball', 'general'):
             cfg['sport'] = data['sport']
+        if data.get('open_refs'):
+            AI.open_references()
+    cfg['refs'] = AI.reference_count()
     return jsonify({'cfg': cfg, 'key': bool(AI.get_key()), 'photos': build_topn()})
 
 
